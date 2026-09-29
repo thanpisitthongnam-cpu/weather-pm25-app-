@@ -1,0 +1,458 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>รายงานสภาพอากาศ & PM2.5</title>
+    
+    <!-- Tailwind CSS สำหรับตกแต่งความสวยงาม -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    
+    <!-- Google Fonts (Kanit) เพื่อให้อ่านภาษาไทยได้สวยงาม -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Kanit:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    
+    <!-- FontAwesome สำหรับไอคอนต่างๆ -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+
+    <style>
+        body {
+            font-family: 'Kanit', sans-serif;
+            background: linear-gradient(135deg, #4facfe 0%, #00f2fe 100%);
+            min-height: 100vh;
+            color: #333;
+            transition: background 1.5s ease; /* ให้พื้นหลังเปลี่ยนสีแบบนุ่มนวล */
+        }
+        
+        /* สไตล์กล่องหลักแบบกระจกใส (Glassmorphism) */
+        .glass-card {
+            background: rgba(255, 255, 255, 0.85);
+            backdrop-filter: blur(10px);
+            -webkit-backdrop-filter: blur(10px);
+            border: 1px solid rgba(255, 255, 255, 0.3);
+            box-shadow: 0 8px 32px 0 rgba(31, 38, 135, 0.15);
+        }
+
+        /* อนิเมชันตอนโหลด (Loading Spinner) */
+        .spinner {
+            border: 4px solid rgba(255, 255, 255, 0.3);
+            border-radius: 50%;
+            border-top: 4px solid #3b82f6; /* สีฟ้า */
+            width: 50px;
+            height: 50px;
+            animation: spin 1s linear infinite;
+        }
+
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+
+        /* อนิเมชันค่อยๆ ปรากฏขึ้นมา */
+        .fade-in {
+            animation: fadeIn 0.5s ease-in-out;
+        }
+
+        @keyframes fadeIn {
+            from { opacity: 0; transform: translateY(10px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+
+        /* ซ่อน Scrollbar สำหรับแนวนอน แต่ยังเลื่อนนิ้วดูได้ */
+        .hide-scrollbar::-webkit-scrollbar {
+            display: none;
+        }
+        .hide-scrollbar {
+            -ms-overflow-style: none;
+            scrollbar-width: none;
+        }
+
+        /* ชุดสีพื้นหลังตามสภาพอากาศ (Dynamic Backgrounds) */
+        .bg-clear { background: linear-gradient(135deg, #4facfe 0%, #00f2fe 100%); } /* ฟ้าใส */
+        .bg-cloudy { background: linear-gradient(135deg, #89f7fe 0%, #66a6ff 100%); } /* เมฆมาก */
+        .bg-rain { background: linear-gradient(135deg, #2b5876 0%, #4e4376 100%); } /* ฝนตก */
+        .bg-dust { background: linear-gradient(135deg, #b0a396 0%, #7a6f63 100%); } /* ฝุ่นหนา */
+        .bg-night { background: linear-gradient(135deg, #141e30 0%, #243b55 100%); } /* กลางคืน */
+    </style>
+</head>
+<body id="app-body" class="flex items-center justify-center p-4 bg-clear">
+
+    <div class="max-w-md w-full glass-card rounded-3xl p-6 relative overflow-hidden transition-all duration-500 shadow-2xl" id="main-container">
+        
+        <!-- 1. หน้าจอตอนกำลังโหลดข้อมูล (Loading State) -->
+        <div id="loading-state" class="flex flex-col items-center justify-center py-20 fade-in">
+            <div class="spinner mb-4"></div>
+            <p class="text-gray-700 font-medium">กำลังค้นหาตำแหน่งและข้อมูลของคุณ...</p>
+        </div>
+
+        <!-- 2. หน้าจอเมื่อเกิดข้อผิดพลาด (Error State) -->
+        <div id="error-state" class="hidden flex flex-col items-center justify-center py-10 text-center fade-in">
+            <div class="text-red-500 text-5xl mb-4"><i class="fa-solid fa-triangle-exclamation"></i></div>
+            <h2 class="text-xl font-bold text-gray-800 mb-2">เกิดข้อผิดพลาด</h2>
+            <p id="error-message" class="text-gray-600 mb-6">ไม่สามารถโหลดข้อมูลได้</p>
+            <button onclick="loadDefaultLocation()" class="bg-blue-500 hover:bg-blue-600 text-white px-6 py-2 rounded-full font-medium transition-colors shadow-md">
+                ลองดูของกรุงเทพมหานครแทน
+            </button>
+        </div>
+
+        <!-- 3. หน้าจอหลักแสดงข้อมูล (Dashboard State - ซ่อนไว้ก่อนจนกว่าจะโหลดเสร็จ) -->
+        <div id="dashboard-state" class="hidden fade-in">
+            
+            <!-- ส่วนหัว: ชื่อสถานที่ และ เวลาอัปเดต -->
+            <div class="flex justify-between items-start mb-6">
+                <div>
+                    <h1 class="text-2xl font-bold text-gray-800 flex items-center gap-2">
+                        <i class="fa-solid fa-location-dot text-red-500"></i>
+                        <span id="location-name">กำลังโหลด...</span>
+                    </h1>
+                    <p class="text-sm text-gray-500 mt-1" id="update-time">อัปเดตล่าสุด: --:--</p>
+                </div>
+                <button onclick="requestLocation()" class="text-gray-400 hover:text-blue-500 transition-colors bg-white rounded-full p-2.5 shadow-sm" title="รีเฟรชข้อมูล">
+                    <i class="fa-solid fa-rotate-right"></i>
+                </button>
+            </div>
+
+            <!-- ส่วนแสดงสภาพอากาศปัจจุบัน (อุณหภูมิหลัก) -->
+            <div class="bg-white/60 rounded-2xl p-5 mb-5 shadow-sm border border-white/50 flex items-center justify-between backdrop-blur-md">
+                <div>
+                    <h2 class="text-6xl font-bold text-gray-800 tracking-tighter drop-shadow-sm" id="temperature">--°</h2>
+                    <p class="text-lg font-medium text-gray-700 mt-1" id="weather-desc">กำลังโหลด...</p>
+                    <p class="text-sm text-gray-500 mt-1">รู้สึกเหมือน: <span id="apparent-temp">--°</span></p>
+                </div>
+                <div class="text-7xl text-blue-500 drop-shadow-lg transition-transform duration-300 hover:scale-110" id="weather-icon">
+                    <i class="fa-solid fa-cloud"></i>
+                </div>
+            </div>
+
+            <!-- ส่วนพยากรณ์รายชั่วโมง (24 ชม. ล่วงหน้า) -->
+            <div class="mb-5">
+                <h3 class="text-sm font-semibold text-gray-700 mb-2 px-1">พยากรณ์รายชั่วโมง (24 ชม.)</h3>
+                <div id="hourly-container" class="flex gap-3 overflow-x-auto hide-scrollbar pb-2">
+                    <!-- ข้อมูลรายชั่วโมงจะถูกใส่ตรงนี้ด้วย Javascript -->
+                    <div class="text-sm text-gray-400 italic">กำลังโหลดข้อมูล...</div>
+                </div>
+            </div>
+
+            <!-- ส่วนแสดงค่าฝุ่น PM2.5 -->
+            <div id="pm25-card" class="rounded-2xl p-5 mb-5 shadow-lg border border-white/50 text-white transition-colors duration-500 bg-gray-400 relative overflow-hidden">
+                <!-- แสงกระพริบเตือนภัยหากฝุ่นอันตราย -->
+                <div id="pm25-pulse" class="absolute -right-4 -top-4 w-24 h-24 bg-white opacity-20 rounded-full animate-ping hidden"></div>
+                
+                <div class="flex justify-between items-start mb-2 relative z-10">
+                    <div>
+                        <h3 class="text-lg font-bold">ฝุ่น PM2.5</h3>
+                        <p class="text-sm font-medium" id="pm25-status">กำลังประมวลผล...</p>
+                    </div>
+                    <div class="text-right">
+                        <span class="text-4xl font-black drop-shadow-md" id="pm25-value">--</span>
+                        <span class="text-sm opacity-80">µg/m³</span>
+                    </div>
+                </div>
+                
+                <!-- แถบหลอดพลัง (Progress Bar) แสดงระดับฝุ่น -->
+                <div class="w-full bg-black/20 rounded-full h-2.5 mt-3 mb-2 relative z-10 overflow-hidden">
+                    <div id="pm25-bar" class="bg-white h-2.5 rounded-full transition-all duration-1000 w-0 shadow-[0_0_10px_rgba(255,255,255,0.8)]"></div>
+                </div>
+                
+                <p class="text-xs mt-1 opacity-95 relative z-10 font-light" id="pm25-advice">--</p>
+            </div>
+
+            <!-- ส่วนข้อมูลเพิ่มเติม (ความชื้น & ความเร็วลม) -->
+            <div class="grid grid-cols-2 gap-4">
+                <div class="bg-white/60 rounded-2xl p-4 shadow-sm border border-white/50 flex flex-col items-center justify-center">
+                    <i class="fa-solid fa-droplet text-blue-400 text-2xl mb-2"></i>
+                    <span class="text-gray-500 text-xs uppercase font-semibold">ความชื้นสัมพัทธ์</span>
+                    <span class="text-xl font-bold text-gray-800 mt-1" id="humidity">--%</span>
+                </div>
+                <div class="bg-white/60 rounded-2xl p-4 shadow-sm border border-white/50 flex flex-col items-center justify-center">
+                    <i class="fa-solid fa-wind text-gray-400 text-2xl mb-2"></i>
+                    <span class="text-gray-500 text-xs uppercase font-semibold">ความเร็วลม</span>
+                    <span class="text-xl font-bold text-gray-800 mt-1" id="wind-speed">-- km/h</span>
+                </div>
+            </div>
+
+            <div class="mt-6 text-center text-xs text-gray-400">
+                ข้อมูลสดจาก OpenMeteo & OpenStreetMap
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // --- 1. ประกาศตัวแปรเชื่อมโยงกับ HTML ---
+        const elLoading = document.getElementById('loading-state');
+        const elError = document.getElementById('error-state');
+        const elDashboard = document.getElementById('dashboard-state');
+        const elErrorMessage = document.getElementById('error-message');
+        
+        const elLocationName = document.getElementById('location-name');
+        const elUpdateTime = document.getElementById('update-time');
+        const elTemperature = document.getElementById('temperature');
+        const elApparentTemp = document.getElementById('apparent-temp');
+        const elWeatherDesc = document.getElementById('weather-desc');
+        const elWeatherIcon = document.getElementById('weather-icon');
+        const elHourlyContainer = document.getElementById('hourly-container');
+
+        const elPm25Card = document.getElementById('pm25-card');
+        const elPm25Value = document.getElementById('pm25-value');
+        const elPm25Bar = document.getElementById('pm25-bar');
+        const elPm25Status = document.getElementById('pm25-status');
+        const elPm25Advice = document.getElementById('pm25-advice');
+        const elPm25Pulse = document.getElementById('pm25-pulse');
+        
+        const elHumidity = document.getElementById('humidity');
+        const elWindSpeed = document.getElementById('wind-speed');
+        const elAppBody = document.getElementById('app-body');
+
+        // พิกัดเริ่มต้น (กรุงเทพมหานคร อนุสาวรีย์ชัยฯ) หากไม่อนุญาตให้ใช้ Location
+        const DEFAULT_LAT = 13.7649;
+        const DEFAULT_LON = 100.5383;
+
+        // --- 2. เริ่มทำงานเมื่อเปิดเว็บ ---
+        window.onload = () => {
+            requestLocation();
+        };
+
+        // ฟังก์ชันสลับหน้าจอ (Loading, Error, Dashboard)
+        function showState(state) {
+            elLoading.classList.add('hidden');
+            elError.classList.add('hidden');
+            elDashboard.classList.add('hidden');
+            
+            if(state === 'loading') elLoading.classList.remove('hidden');
+            if(state === 'error') elError.classList.remove('hidden');
+            if(state === 'dashboard') elDashboard.classList.remove('hidden');
+        }
+
+        // --- 3. ฟังก์ชันขอตำแหน่ง GPS ---
+        function requestLocation() {
+            showState('loading');
+            
+            if ("geolocation" in navigator) {
+                navigator.geolocation.getCurrentPosition(
+                    (position) => {
+                        const lat = position.coords.latitude;
+                        const lon = position.coords.longitude;
+                        fetchData(lat, lon); // ได้พิกัดแล้ว ไปดึงข้อมูล
+                    },
+                    (error) => {
+                        console.warn("Geolocation error:", error);
+                        showState('error');
+                        switch(error.code) {
+                            case error.PERMISSION_DENIED:
+                                elErrorMessage.innerHTML = "คุณปฏิเสธการเข้าถึงตำแหน่ง<br>กรุณากดอนุญาต หรือดูของกรุงเทพฯ แทน";
+                                break;
+                            default:
+                                elErrorMessage.innerText = "ไม่สามารถระบุตำแหน่งของคุณได้ในขณะนี้";
+                        }
+                    },
+                    { timeout: 10000, maximumAge: 60000 }
+                );
+            } else {
+                showState('error');
+                elErrorMessage.innerText = "เบราว์เซอร์ของคุณไม่รองรับการระบุตำแหน่ง";
+            }
+        }
+
+        // โหลดข้อมูลกรุงเทพฯ แทน
+        function loadDefaultLocation() {
+            fetchData(DEFAULT_LAT, DEFAULT_LON);
+        }
+
+        // --- 4. ฟังก์ชันดึงข้อมูลจาก API ---
+        async function fetchData(lat, lon) {
+            showState('loading');
+            
+            try {
+                // เตรียม URLs ของ API ทั้ง 3 ตัว
+                const weatherUrl = `https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lon}&current=temperature_2m,relative_humidity_2m,weather_code,wind_speed_10m,apparent_temperature&hourly=temperature_2m,weather_code&timezone=auto&forecast_days=2`;
+                const aqiUrl = `https://air-quality-api.open-meteo.com/v1/air-quality?latitude=${lat}&longitude=${lon}&current=pm2_5&timezone=auto`;
+                // API หาชื่อเมืองจากพิกัด (Reverse Geocoding)
+                const geoUrl = `https://nominatim.openstreetmap.org/reverse?format=json&lat=${lat}&lon=${lon}&zoom=10&accept-language=th`;
+
+                // ยิง API พร้อมกันทั้ง 3 ตัวเพื่อความรวดเร็ว
+                const [weatherRes, aqiRes, geoRes] = await Promise.all([
+                    fetch(weatherUrl),
+                    fetch(aqiUrl),
+                    fetch(geoUrl).catch(() => null) // ดัก Error ถ้าระบบหาชื่อเมืองล่ม
+                ]);
+
+                if (!weatherRes.ok || !aqiRes.ok) throw new Error("API Error");
+
+                const weatherData = await weatherRes.json();
+                const aqiData = await aqiRes.json();
+                
+                // หาชื่อสถานที่
+                let locationName = "ตำแหน่งของคุณ";
+                if (geoRes && geoRes.ok) {
+                    const geoData = await geoRes.json();
+                    if (geoData && geoData.address) {
+                        locationName = geoData.address.city || geoData.address.town || geoData.address.province || geoData.address.state || "ตำแหน่งของคุณ";
+                    }
+                }
+
+                // นำข้อมูลไปแสดงผลบนหน้าจอ
+                updateUI(weatherData, aqiData.current, locationName);
+                showState('dashboard');
+
+            } catch (error) {
+                console.error("Fetch error:", error);
+                showState('error');
+                elErrorMessage.innerText = "เชื่อมต่อเซิร์ฟเวอร์ล้มเหลว กรุณาลองใหม่ภายหลัง";
+            }
+        }
+
+        // --- 5. ฟังก์ชันอัปเดตหน้าจอ ---
+        function updateUI(weatherData, aqi, locationName) {
+            const weather = weatherData.current;
+            const now = new Date();
+            
+            // ข้อมูลทั่วไป
+            elLocationName.innerText = locationName;
+            elUpdateTime.innerText = `อัปเดตล่าสุด: ${now.getHours().toString().padStart(2, '0')}:${now.getMinutes().toString().padStart(2, '0')} น.`;
+
+            // ข้อมูลสภาพอากาศ
+            elTemperature.innerText = `${Math.round(weather.temperature_2m)}°`;
+            elApparentTemp.innerText = `${Math.round(weather.apparent_temperature)}°`;
+            elHumidity.innerText = `${weather.relative_humidity_2m}%`;
+            elWindSpeed.innerText = `${weather.wind_speed_10m} km/h`;
+
+            // ไอคอนและคำอธิบายสภาพอากาศ
+            const weatherInfo = getWeatherInfo(weather.weather_code);
+            elWeatherDesc.innerText = weatherInfo.desc;
+            elWeatherIcon.innerHTML = `<i class="fa-solid ${weatherInfo.icon}" style="color: ${weatherInfo.color}"></i>`;
+
+            // สร้างแถบพยากรณ์ล่วงหน้า
+            renderHourlyForecast(weatherData.hourly);
+
+            // ข้อมูล PM2.5
+            const pm25Val = aqi.pm2_5;
+            elPm25Value.innerText = pm25Val.toFixed(1);
+            
+            const pm25Info = getPM25Info(pm25Val);
+            
+            // เปลี่ยนสีการ์ดตามความอันตรายของฝุ่น
+            elPm25Card.className = `rounded-2xl p-5 mb-5 shadow-lg border border-white/50 text-white transition-colors duration-500 relative overflow-hidden ${pm25Info.bgClass}`;
+            elPm25Status.innerText = pm25Info.status;
+            elPm25Advice.innerText = pm25Info.advice;
+            
+            // เปิดแสงไฟกระพริบเตือนถ้าฝุ่นเกิน 55
+            if(pm25Val > 55.0) {
+                elPm25Pulse.classList.remove('hidden');
+            } else {
+                elPm25Pulse.classList.add('hidden');
+            }
+            
+            // อนิเมชันหลอดค่าฝุ่น (เต็มหลอดที่ 200 ไมโครกรัม)
+            const percentage = Math.min((pm25Val / 200) * 100, 100);
+            setTimeout(() => {
+                elPm25Bar.style.width = `${percentage}%`;
+            }, 100);
+
+            // อัปเดตสีพื้นหลังของเว็บ
+            updateBackground(weather.weather_code, pm25Val, now.getHours());
+        }
+
+        // สร้างส่วนพยากรณ์รายชั่วโมง
+        function renderHourlyForecast(hourlyData) {
+            elHourlyContainer.innerHTML = '';
+            const currentHour = new Date().getHours();
+            
+            // ดึงข้อมูล 24 ชั่วโมงถัดไป
+            for(let i = currentHour; i < currentHour + 24; i++) {
+                const temp = Math.round(hourlyData.temperature_2m[i]);
+                const code = hourlyData.weather_code[i];
+                const wInfo = getWeatherInfo(code);
+                
+                // จัดการเวลา (เช่น 14:00)
+                let hourText = "ตอนนี้";
+                if (i !== currentHour) {
+                    const displayHour = i % 24;
+                    hourText = `${displayHour.toString().padStart(2, '0')}:00`;
+                }
+
+                // สร้างกล่องสี่เหลี่ยมทีละอันแล้วยัดลงไป
+                const itemHtml = `
+                    <div class="flex flex-col items-center justify-center bg-white/50 rounded-xl p-3 min-w-[70px] border border-white/40 shadow-sm flex-shrink-0 backdrop-blur-sm">
+                        <span class="text-xs text-gray-600 font-medium mb-1">${hourText}</span>
+                        <i class="fa-solid ${wInfo.icon} text-xl mb-1" style="color: ${wInfo.color}"></i>
+                        <span class="text-sm font-bold text-gray-800">${temp}°</span>
+                    </div>
+                `;
+                elHourlyContainer.innerHTML += itemHtml;
+            }
+        }
+
+        // --- 6. ฟังก์ชันจัดการสีและไอคอน ---
+        // เปลี่ยนสีพื้นหลังตามสถานการณ์
+        function updateBackground(weatherCode, pm25Value, currentHour) {
+            elAppBody.className = "flex items-center justify-center p-4 transition-colors duration-1000";
+            const isNight = currentHour < 6 || currentHour >= 18; // มืดหลัง 6 โมงเย็น
+
+            if (pm25Value > 150) {
+                elAppBody.classList.add('bg-dust'); // ฝุ่นหนักจัดสีน้ำตาล
+            } else if (isNight) {
+                elAppBody.classList.add('bg-night'); // กลางคืนสีกรมท่า
+            } else if (weatherCode >= 51 && weatherCode <= 99) {
+                elAppBody.classList.add('bg-rain'); // ฝนตกสีครึ้ม
+            } else if (weatherCode === 3 || weatherCode === 45 || weatherCode === 48) {
+                elAppBody.classList.add('bg-cloudy'); // เมฆมาก/หมอก สีตุ่นๆ
+            } else {
+                elAppBody.classList.add('bg-clear'); // ฟ้าใส
+            }
+        }
+
+        // รหัสสภาพอากาศจาก WMO API
+        function getWeatherInfo(code) {
+            let info = { desc: "ไม่ทราบสภาพอากาศ", icon: "fa-cloud", color: "#9CA3AF" };
+            
+            if (code === 0) info = { desc: "ท้องฟ้าแจ่มใส", icon: "fa-sun", color: "#F59E0B" }; // ส้ม
+            else if (code === 1 || code === 2) info = { desc: "มีเมฆบางส่วน", icon: "fa-cloud-sun", color: "#60A5FA" }; // ฟ้า
+            else if (code === 3) info = { desc: "มีเมฆมาก", icon: "fa-cloud", color: "#9CA3AF" }; // เทา
+            else if (code === 45 || code === 48) info = { desc: "มีหมอกบาง", icon: "fa-smog", color: "#D1D5DB" };
+            else if (code >= 51 && code <= 55) info = { desc: "ฝนปรอยๆ", icon: "fa-cloud-rain", color: "#3B82F6" };
+            else if (code >= 61 && code <= 65) info = { desc: "ฝนตกปานกลาง", icon: "fa-cloud-showers-heavy", color: "#2563EB" };
+            else if (code >= 71 && code <= 77) info = { desc: "หิมะตก", icon: "fa-snowflake", color: "#93C5FD" }; // ไทยคงไม่ได้ใช้
+            else if (code >= 80 && code <= 82) info = { desc: "ฝนตกหนัก", icon: "fa-cloud-showers-heavy", color: "#1D4ED8" }; // น้ำเงินเข้ม
+            else if (code >= 95) info = { desc: "พายุฝนฟ้าคะนอง", icon: "fa-cloud-bolt", color: "#4B5563" };
+            
+            return info;
+        }
+
+        // เกณฑ์ระดับฝุ่น PM2.5 และคำแนะนำ
+        function getPM25Info(value) {
+            if (value <= 15.0) {
+                return {
+                    status: "คุณภาพอากาศดีมาก (Good)",
+                    advice: "เหมาะสำหรับกิจกรรมกลางแจ้ง 🌿",
+                    bgClass: "bg-gradient-to-r from-emerald-400 to-emerald-500", // สีเขียว
+                };
+            } else if (value <= 35.0) {
+                return {
+                    status: "ปานกลาง (Moderate)",
+                    advice: "ทำกิจกรรมได้ปกติ ผู้ป่วยควรระวัง 🌤️",
+                    bgClass: "bg-gradient-to-r from-yellow-400 to-yellow-500", // สีเหลือง
+                };
+            } else if (value <= 55.0) {
+                return {
+                    status: "เริ่มมีผลกระทบ (Unhealthy)",
+                    advice: "กลุ่มเสี่ยงควรลดเวลาอยู่กลางแจ้ง 😷",
+                    bgClass: "bg-gradient-to-r from-orange-400 to-orange-500", // สีส้ม
+                };
+            } else if (value <= 150.0) {
+                return {
+                    status: "มีผลกระทบต่อสุขภาพ (Bad)",
+                    advice: "ควรสวมหน้ากาก N95 งดออกกำลังกาย ⚠️",
+                    bgClass: "bg-gradient-to-r from-red-500 to-red-600", // สีแดง
+                };
+            } else {
+                return {
+                    status: "อันตรายมาก (Hazardous)",
+                    advice: "งดกิจกรรมกลางแจ้งทุกชนิด สวม N95 🚨",
+                    bgClass: "bg-gradient-to-r from-purple-600 to-purple-800", // สีม่วง
+                };
+            }
+        }
+    </script>
+</body>
+</html>
